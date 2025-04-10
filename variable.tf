@@ -1,6 +1,6 @@
 variable "aws_region" {
   description = "AWS region to deploy the infrastructure"
-  default     = "aws-global"
+  default     = "us-east-1"
 }
 
 variable "vpc_cidr" {
@@ -38,12 +38,3 @@ variable "alb_security_groups" {
   default     = [] # Add security group IDs here
 }
 
-variable "aws_access_key_id" {
-  description = "AWS Access Key ID"
-  type        = string
-}
-
-variable "aws_secret_access_key" {
-  description = "AWS Secret Access Key"
-  type        = string
-}
