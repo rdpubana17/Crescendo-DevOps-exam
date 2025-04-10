@@ -37,3 +37,13 @@ variable "alb_security_groups" {
   description = "Security groups for the Application Load Balancer"
   default     = [] # Add security group IDs here
 }
+
+variable "aws_access_key_id" {
+  description = "AWS Access Key ID"
+  type        = string
+}
+
+variable "aws_secret_access_key" {
+  description = "AWS Secret Access Key"
+  type        = string
+}
