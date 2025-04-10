@@ -17,3 +17,7 @@ variable "instance_type" {
   description = "Type of the EC2 instances"
   default     = "t2.micro"
 }
+variable "aws_region" {
+  description = "AWS region to deploy the infrastructure"
+  default     = "us-east-1"
+}
