@@ -1,30 +1,33 @@
 provider "aws" {
-  region = "us-east-1" # Replace with your AWS region
+  region = var.aws_region
 }
 
 resource "aws_vpc" "main" {
-  cidr_block       = "10.0.0.0/16"
-  enable_dns_support = true
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
   enable_dns_hostnames = true
+
   tags = {
     Name = "MainVPC"
   }
 }
 
 resource "aws_subnet" "public" {
-  count                   = 2
+  count                   = length(var.public_subnet_cidrs)
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.${count.index}.0/24"
+  cidr_block              = var.public_subnet_cidrs[count.index]
   map_public_ip_on_launch = true
+
   tags = {
     Name = "PublicSubnet-${count.index}"
   }
 }
 
 resource "aws_subnet" "private" {
-  count      = 2
+  count      = length(var.private_subnet_cidrs)
   vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.${count.index + 2}.0/24"
+  cidr_block = var.private_subnet_cidrs[count.index]
+
   tags = {
     Name = "PrivateSubnet-${count.index}"
   }
@@ -32,16 +35,9 @@ resource "aws_subnet" "private" {
 
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
+
   tags = {
     Name = "InternetGateway"
-  }
-}
-
-resource "aws_nat_gateway" "nat" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-  tags = {
-    Name = "NatGateway"
   }
 }
 
@@ -49,14 +45,20 @@ resource "aws_eip" "nat" {
   domain = "vpc"
 }
 
-resource "aws_instance" "app" {
-  count         = 2
-  ami           = "ami-0f9de6e2d2f067fca" # Replace with a valid AMI ID
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.private[count.index].id
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id
+
   tags = {
-    Name = "AppInstance-${count.index}"
+    Name = "NatGateway"
   }
+}
+
+resource "aws_instance" "app" {
+  count         = var.ec2_instance_count
+  ami           = var.ec2_ami
+  instance_type = var.ec2_instance_type
+  subnet_id     = aws_subnet.private[count.index].id
 
   user_data = <<-EOF
     #!/bin/bash
@@ -64,14 +66,19 @@ resource "aws_instance" "app" {
     sudo apt install -y nginx
     sudo apt install -y tomcat
   EOF
+
+  tags = {
+    Name = "AppInstance-${count.index}"
+  }
 }
 
 resource "aws_lb" "alb" {
   name               = "application-load-balancer"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [] # Define security groups
+  security_groups    = var.alb_security_groups
   subnets            = aws_subnet.public[*].id
+
   tags = {
     Name = "ALB"
   }
@@ -82,12 +89,25 @@ resource "aws_cloudfront_distribution" "cdn" {
     domain_name = aws_lb.alb.dns_name
     origin_id   = "ALBOrigin"
   }
+
   enabled             = true
   default_root_object = "index.html"
 
   default_cache_behavior {
     target_origin_id       = "ALBOrigin"
     viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
   }
 
   tags = {
