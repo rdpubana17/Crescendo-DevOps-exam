@@ -4,6 +4,7 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
+# VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -14,6 +15,7 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Subnets
 resource "aws_subnet" "public" {
   count                   = length(var.public_subnet_cidrs)
   vpc_id                  = aws_vpc.main.id
@@ -37,6 +39,7 @@ resource "aws_subnet" "private" {
   }
 }
 
+# Internet Gateway
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 
@@ -45,6 +48,7 @@ resource "aws_internet_gateway" "igw" {
   }
 }
 
+# NAT Gateway
 resource "aws_eip" "nat" {
   domain = "vpc"
 }
@@ -58,6 +62,7 @@ resource "aws_nat_gateway" "nat" {
   }
 }
 
+# EC2 Instances
 resource "aws_instance" "app" {
   count         = var.ec2_instance_count
   ami           = var.ec2_ami
@@ -76,14 +81,15 @@ resource "aws_instance" "app" {
   }
 }
 
+# Load Balancer
 resource "aws_lb" "alb" {
   name               = "application-load-balancer"
   internal           = false
   load_balancer_type = "application"
   security_groups    = var.alb_security_groups
   subnets            = [
-    aws_subnet.public[0].id, # Subnet in one AZ
-    aws_subnet.public[1].id  # Subnet in another AZ
+    aws_subnet.public[0].id,
+    aws_subnet.public[1].id
   ]
 
   tags = {
@@ -91,10 +97,18 @@ resource "aws_lb" "alb" {
   }
 }
 
+# CloudFront Distribution
 resource "aws_cloudfront_distribution" "cdn" {
   origin {
     domain_name = aws_lb.alb.dns_name
     origin_id   = "ALBOrigin"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
   }
 
   enabled             = true
@@ -105,6 +119,14 @@ resource "aws_cloudfront_distribution" "cdn" {
     viewer_protocol_policy = "redirect-to-https"
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+
+      cookies {
+        forward = "none"
+      }
+    }
   }
 
   viewer_certificate {
