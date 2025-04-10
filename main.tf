@@ -2,7 +2,7 @@ provider "aws" {
   region = "us-east-1"
 }
 
-
+data "aws_availability_zones" "available" {}
 
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -19,6 +19,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidrs[count.index]
   map_public_ip_on_launch = true
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
 
   tags = {
     Name = "PublicSubnet-${count.index}"
@@ -26,9 +27,10 @@ resource "aws_subnet" "public" {
 }
 
 resource "aws_subnet" "private" {
-  count      = length(var.private_subnet_cidrs)
-  vpc_id     = aws_vpc.main.id
-  cidr_block = var.private_subnet_cidrs[count.index]
+  count                   = length(var.private_subnet_cidrs)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.private_subnet_cidrs[count.index]
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
 
   tags = {
     Name = "PrivateSubnet-${count.index}"
@@ -79,7 +81,10 @@ resource "aws_lb" "alb" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = var.alb_security_groups
-  subnets            = aws_subnet.public[*].id
+  subnets            = [
+    aws_subnet.public[0].id, # Subnet in one AZ
+    aws_subnet.public[1].id  # Subnet in another AZ
+  ]
 
   tags = {
     Name = "ALB"
