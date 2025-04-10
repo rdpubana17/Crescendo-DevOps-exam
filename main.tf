@@ -6,7 +6,7 @@ data "aws_availability_zones" "available" {}
 
 # VPC
 resource "aws_vpc" "main" {
-  cidr_block           = var.vpc_cidr
+  cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
 
@@ -17,9 +17,9 @@ resource "aws_vpc" "main" {
 
 # Subnets
 resource "aws_subnet" "public" {
-  count                   = length(var.public_subnet_cidrs)
+  count                   = 2
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnet_cidrs[count.index]
+  cidr_block              = cidrsubnet("10.0.0.0/16", 8, count.index)
   map_public_ip_on_launch = true
   availability_zone       = data.aws_availability_zones.available.names[count.index]
 
@@ -29,9 +29,9 @@ resource "aws_subnet" "public" {
 }
 
 resource "aws_subnet" "private" {
-  count                   = length(var.private_subnet_cidrs)
+  count                   = 2
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.private_subnet_cidrs[count.index]
+  cidr_block              = cidrsubnet("10.0.0.0/16", 8, count.index + 2)
   availability_zone       = data.aws_availability_zones.available.names[count.index]
 
   tags = {
@@ -62,18 +62,59 @@ resource "aws_nat_gateway" "nat" {
   }
 }
 
+# Security Groups
+resource "aws_security_group" "alb_sg" {
+  name   = "alb-sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "app_sg" {
+  name   = "app-sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 # EC2 Instances
 resource "aws_instance" "app" {
-  count         = var.ec2_instance_count
-  ami           = var.ec2_ami
-  instance_type = var.ec2_instance_type
+  count         = 2
+  ami           = "ami-0f9de6e2d2f067fca" # Ubuntu (confirm in your region)
+  instance_type = "t2.micro"
   subnet_id     = aws_subnet.private[count.index].id
+  vpc_security_group_ids = [aws_security_group.app_sg.id]
 
   user_data = <<-EOF
     #!/bin/bash
     sudo apt update -y
     sudo apt install -y nginx
-    sudo apt install -y tomcat
+    sudo systemctl start nginx
+    sudo systemctl enable nginx
   EOF
 
   tags = {
@@ -86,7 +127,7 @@ resource "aws_lb" "alb" {
   name               = "application-load-balancer"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = var.alb_security_groups
+  security_groups    = [aws_security_group.alb_sg.id]
   subnets            = [
     aws_subnet.public[0].id,
     aws_subnet.public[1].id
@@ -95,6 +136,39 @@ resource "aws_lb" "alb" {
   tags = {
     Name = "ALB"
   }
+}
+
+# Target Group & Listener
+resource "aws_lb_target_group" "app_tg" {
+  name     = "app-target-group"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path     = "/"
+    protocol = "HTTP"
+  }
+
+  target_type = "instance"
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app_tg.arn
+  }
+}
+
+resource "aws_lb_target_group_attachment" "app_attachment" {
+  count            = 2
+  target_group_arn = aws_lb_target_group.app_tg.arn
+  target_id        = aws_instance.app[count.index].id
+  port             = 80
 }
 
 # CloudFront Distribution
@@ -122,7 +196,6 @@ resource "aws_cloudfront_distribution" "cdn" {
 
     forwarded_values {
       query_string = false
-
       cookies {
         forward = "none"
       }
